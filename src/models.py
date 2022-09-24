@@ -126,6 +126,10 @@ class ResNet(nn.Module):
 
 class IdentityResNet(nn.Module):
     config: dict
+    '''
+    for later use
+    nStages = {16, 64, 128, 256}
+    '''
 
     @nn.compact
     def __call__(self, x, training: bool):

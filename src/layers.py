@@ -112,12 +112,12 @@ class IdentityResBlock(nn.Module):
                 padding="SAME", use_bias=False
             )(x)
         else:
-            if self.increase_dim:
-                skip = nn.Conv(self.n_filters[-1], (1, 1), padding="SAME")(x)
-            else:
+            if not self.increase_dim:
                 skip = jnp.identity(x)
             x = nn.BatchNorm()(x, use_running_average=not training)
             x = self.act(x)
+            if self.increase_dim:
+                skip = nn.Conv(self.n_filters[-1], (1, 1), padding="SAME")(x)
             x = nn.Conv(
                 self.n_filters[0], (3, 3) if len(self.n_filters == 2) else (1, 1), padding="SAME"
             )(x)
