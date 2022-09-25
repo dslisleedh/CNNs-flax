@@ -145,7 +145,7 @@ class DenseLayer(nn.Module):
         y = self.act(y)
         y = nn.Conv(self.n_filters, (3, 3), padding="SAME")(y)
         y = nn.Dropout(self.dropout_rate)(y, deterministic=not training)
-        return jnp.concatenate([x, y], axis=-1)
+        return y
 
 
 class DenseTransitionLayer(nn.Module):
