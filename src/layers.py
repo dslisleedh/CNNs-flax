@@ -35,7 +35,7 @@ class Inception(nn.Module):
     conv_5_filters: Sequence[int]
     max_pool_filters: int
     down_sample: bool = False
-    act = nn.relu
+    act = staticmethod(nn.relu)
 
     @nn.compact
     def __call__(self, x):
@@ -62,77 +62,90 @@ class Inception(nn.Module):
         return jnp.concatenate([conv_1, conv_3, conv_5, max_pool], axis=-1)
 
 
+class SkipBlock(nn.Module):
+    forward: nn.Module
+    act = staticmethod(nn.relu)
+
+    @nn.compact
+    def __call__(self, x, training: bool):
+        if self.forward.down_sample:
+            skip = nn.Conv(self.forward.n_filters[-1], (3, 3), strides=(2, 2), padding='SAME')(x)
+        else:
+            if self.forward.increase_dim:
+                skip = nn.Conv(self.forward.n_filters[-1], (1, 1), padding='SAME')(x)
+            else:
+                skip = x
+
+        x = self.forward(x, training=training)
+        x = self.act(x + skip)
+        return x
+
+
 class ResBlock(nn.Module):
     n_filters: Sequence[int]
-    act = nn.relu
+    act = staticmethod(nn.relu)
     down_sample: bool = False
     increase_dim: bool = False
 
     @nn.compact
     def __call__(self, x, training: bool):
-        if self.down_sample:
-            skip = nn.Conv(self.n_filters[-1], (3, 3), strides=(2, 2), padding="SAME")(x)
-            x = nn.Conv(
-                self.n_filters[0], (3, 3) if len(self.n_filters) == 2 else (1, 1), strides=(2, 2),
-                padding="SAME", use_bias=False
-            )(x)
-        else:
-            if self.increase_dim:
-                skip = nn.Conv(self.n_filters[-1], (1, 1), padding="SAME")(x)
-            else:
-                skip = jnp.identity(x)
-            x = nn.Conv(
-                self.n_filters[0], (3, 3) if len(self.n_filters) == 2 else (1, 1),
-                padding="SAME", use_bias=False
-            )(x)
-        x = nn.BatchNorm()(x, use_running_average=not training)
+        x = nn.Conv(
+            self.n_filters[0], (3, 3) if len(self.n_filters) == 2 else (1, 1), padding='SAME',
+            strides=(2, 2) if self.down_sample else (1, 1), use_bias=False
+        )(x)
+        x = nn.BatchNorm(use_running_average=not training)(x)
+        x = self.act(x)
         for i, n_filter in enumerate(self.n_filters[1:]):
             x = self.act(x)
             x = nn.Conv(n_filter, (3, 3) if i == 0 else (1, 1), padding="SAME", use_bias=False)(x)
             x = nn.BatchNorm()(x, use_running_average=not training)
-        x += skip
-        x = self.act(x)
         return x
 
 
-class IdentityResBlock(nn.Module):
+class IdentitySkipBlock(nn.Module):
+    forward: nn.Module
+    act = staticmethod(nn.relu)
+
+    @nn.compact
+    def __call__(self, x, training: bool):
+        if self.forward.increase_dim:
+            x = nn.BatchNorm()(x, use_running_average=not training)
+            x = self.act(x)
+            skip = nn.Conv(self.forward.n_filters[-1], (1, 1), padding='SAME')(x)
+        else:
+            if self.forward.down_sample:
+                skip = nn.Conv(self.forward.n_filters[-1], (3, 3), strides=(2, 2), padding='SAME')(x)
+            else:
+                skip = x
+        x = self.forward(x, training) + skip
+        return x
+
+
+class PreActResBlock(nn.Module):
     n_filters: Sequence[int]
-    act = nn.relu
+    act = staticmethod(nn.relu)
     down_sample: bool = False
     increase_dim: bool = False
 
     @nn.compact
     def __call__(self, x, training: bool):
-        if self.down_sample:
-            skip = nn.Conv(self.n_filters[-1], (1, 1), strides=(2, 2), padding="SAME")(x)
-            x = nn.BatchNorm()(x, use_running_average=not training)
+        if not self.increase_dim:
+            x = nn.BatchNorm(use_running_average=not training)(x)
             x = self.act(x)
-            x = nn.Conv(
-                self.n_filters[0], (3, 3) if len(self.n_filters) == 2 else (1, 1), strides=(2, 2),
-                padding="SAME", use_bias=False
-            )(x)
-        else:
-            if not self.increase_dim:
-                skip = jnp.identity(x)
-            x = nn.BatchNorm()(x, use_running_average=not training)
-            x = self.act(x)
-            if self.increase_dim:
-                skip = nn.Conv(self.n_filters[-1], (1, 1), padding="SAME")(x)
-            x = nn.Conv(
-                self.n_filters[0], (3, 3) if len(self.n_filters) == 2 else (1, 1), padding="SAME"
-            )(x)
-        x = nn.BatchNorm()(x, use_running_average=not training)
+        x = nn.Conv(
+            self.n_filters[0], (1, 1), padding='SAME', use_bias=False,
+            strides=(2, 2) if self.down_sample else (1, 1)
+        )(x)
         for i, n_filter in enumerate(self.n_filters[1:]):
+            x = nn.BatchNorm(use_running_average=not training)(x)
             x = self.act(x)
-            x = nn.Conv(self.n_filters, (3, 3) if i == 0 else (1, 1), padding="SAME")(x)
-            x = nn.BatchNorm()(x, use_running_average=not training)
-        x = x + skip
+            x = nn.Conv(n_filter, (3, 3) if i == 0 else (1, 1), padding="SAME", use_bias=False)(x)
         return x
 
 
 class DenseLayer(nn.Module):
     n_filters: int
-    act = nn.relu
+    act = staticmethod(nn.relu)
     dropout_rate: float = .2
 
     @nn.compact
@@ -150,7 +163,7 @@ class DenseLayer(nn.Module):
 
 class DenseTransitionLayer(nn.Module):
     n_filters: int
-    act = nn.relu
+    act = staticmethod(nn.relu)
     dropout_rate: float = .2
 
     @nn.compact
@@ -161,4 +174,40 @@ class DenseTransitionLayer(nn.Module):
         y = nn.Dropout(self.dropout_rate)(y, deterministic=not training)
         y = nn.avg_pool(y, window_shape=(2, 2), strides=(2, 2), padding="VALID")
         return y
+
+
+class SEBlock(nn.Module):
+    forward: nn.Module
+    r: int = 4
+
+    @nn.compact
+    def __call__(self, x, training: bool):
+        y = self.forward(x, training=training)
+
+        n_filters = y.shape[-1]
+        attention = jnp.mean(y, axis=(1, 2), keepdims=True)
+        attention = nn.Dense(n_filters // self.r)(attention)
+        attention = nn.relu(attention)
+        attention = nn.Dense(n_filters)(attention)
+        attention = nn.sigmoid(attention)
+
+        return y * attention
+
+
+class SESkipBlock(nn.Module):
+    forward: nn.Module
+    r: int = 4
+
+    @nn.compact
+    def __call__(self, x, training: bool):
+        y = self.forward(x, training=training)
+
+        n_filters = y.shape[-1]
+        attention = jnp.mean(x, axis=(1, 2), keepdims=True)
+        attention = nn.Dense(n_filters // self.r)(attention)
+        attention = nn.relu(attention)
+        attention = nn.Dense(n_filters)(attention)
+        attention = nn.sigmoid(attention)
+
+        return x + y * attention
 

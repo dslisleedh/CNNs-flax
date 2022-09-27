@@ -110,11 +110,17 @@ class ResNet(nn.Module):
         for i, n_blocks in enumerate(self.config['n_filters']):
             if i == 0:
                 x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
-                x = ResBlock(self.config['n_filters'][i], increase_dim=True)(x, training=training)
+                x = SkipBlock(
+                    ResBlock(self.config['n_filters'][i], increase_dim=True)
+                )(x, training=training)
             else:
-                x = ResBlock(self.config['n_filters'][i], downsample=True)(x, training=training)
+                x = SkipBlock(
+                    ResBlock(self.config['n_filters'][i], downsample=True)
+                )(x, training=training)
             for _ in range(n_blocks - 1):
-                x = ResBlock(self.config['n_filters'][i])(x, training=training)
+                x = SkipBlock(
+                    ResBlock(self.config['n_filters'][i])
+                )(x, training=training)
 
         # Classification head
         x = nn.avg_pool(x, window_shape=(7, 7), strides=(1, 1), padding="VALID")
@@ -141,11 +147,17 @@ class PreActResNet(nn.Module):
         for i, n_blocks in enumerate(self.config['n_filters']):
             if i == 0:
                 x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
-                x = IdentityResBlock(self.config['n_filters'][i], increase_dim=True)(x, training=training)
+                x = IdentitySkipBlock(
+                    PreActResBlock(self.config['n_filters'][i], increase_dim=True)
+                )(x, training=training)
             else:
-                x = IdentityResBlock(self.config['n_filters'][i], downsample=True)(x, training=training)
+                x = IdentitySkipBlock(
+                    PreActResBlock(self.config['n_filters'][i], downsample=True)
+                )(x, training=training)
             for _ in range(n_blocks - 1):
-                x = IdentityResBlock(self.config['n_filters'][i])(x, training=training)
+                x = IdentitySkipBlock(
+                    PreActResBlock(self.config['n_filters'][i])
+                )(x, training=training)
 
         # Classification head
         x = nn.avg_pool(x, window_shape=(7, 7), strides=(1, 1), padding="VALID")
