@@ -108,7 +108,7 @@ class IdentityResBlock(nn.Module):
             x = nn.BatchNorm()(x, use_running_average=not training)
             x = self.act(x)
             x = nn.Conv(
-                self.n_filters[0], (3, 3) if len(self.n_filters == 2) else (1, 1), strides=(2, 2),
+                self.n_filters[0], (3, 3) if len(self.n_filters) == 2 else (1, 1), strides=(2, 2),
                 padding="SAME", use_bias=False
             )(x)
         else:
@@ -119,7 +119,7 @@ class IdentityResBlock(nn.Module):
             if self.increase_dim:
                 skip = nn.Conv(self.n_filters[-1], (1, 1), padding="SAME")(x)
             x = nn.Conv(
-                self.n_filters[0], (3, 3) if len(self.n_filters == 2) else (1, 1), padding="SAME"
+                self.n_filters[0], (3, 3) if len(self.n_filters) == 2 else (1, 1), padding="SAME"
             )(x)
         x = nn.BatchNorm()(x, use_running_average=not training)
         for i, n_filter in enumerate(self.n_filters[1:]):

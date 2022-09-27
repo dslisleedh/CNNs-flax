@@ -107,7 +107,7 @@ class ResNet(nn.Module):
         x = nn.relu(x)
 
         # Feature extraction
-        for i, n_blocks in enumerate(len(self.config['n_filters'])):
+        for i, n_blocks in enumerate(self.config['n_filters']):
             if i == 0:
                 x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
                 x = ResBlock(self.config['n_filters'][i], increase_dim=True)(x, training=training)
@@ -124,7 +124,7 @@ class ResNet(nn.Module):
         return y
 
 
-class IdentityResNet(nn.Module):
+class PreActResNet(nn.Module):
     config: dict
     '''
     for later use
@@ -138,7 +138,7 @@ class IdentityResNet(nn.Module):
         x = nn.relu(x)
 
         # Feature extraction
-        for i, n_blocks in enumerate(len(self.config['n_filters'])):
+        for i, n_blocks in enumerate(self.config['n_filters']):
             if i == 0:
                 x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
                 x = IdentityResBlock(self.config['n_filters'][i], increase_dim=True)(x, training=training)
