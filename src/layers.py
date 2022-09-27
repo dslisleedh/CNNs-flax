@@ -94,7 +94,6 @@ class ResBlock(nn.Module):
             strides=(2, 2) if self.down_sample else (1, 1), use_bias=False
         )(x)
         x = nn.BatchNorm(use_running_average=not training)(x)
-        x = self.act(x)
         for i, n_filter in enumerate(self.n_filters[1:]):
             x = self.act(x)
             x = nn.Conv(n_filter, (3, 3) if i == 0 else (1, 1), padding="SAME", use_bias=False)(x)
@@ -178,7 +177,7 @@ class DenseTransitionLayer(nn.Module):
 
 class SEBlock(nn.Module):
     forward: nn.Module
-    r: int = 4
+    r: int = 16
 
     @nn.compact
     def __call__(self, x, training: bool):
@@ -194,12 +193,54 @@ class SEBlock(nn.Module):
         return y * attention
 
 
-class SESkipBlock(nn.Module):
-    forward: nn.Module
-    r: int = 4
+class ResXBlock(nn.Module):
+    n_filters: Sequence[int]
+    act = staticmethod(nn.relu)
+    down_sample: bool = False
+    increase_dim: bool = False
+    c: int = 32
 
     @nn.compact
     def __call__(self, x, training: bool):
+        x = [
+            nn.Conv(
+                self.n_filters[0] / self.c, (3, 3) if len(self.n_filters) == 2 else (1, 1), padding='SAME',
+                strides=(2, 2) if self.down_sample else (1, 1), use_bias=False
+            )(x) for _ in range(self.c)
+        ]
+        x = [nn.BatchNorm(use_running_average=not training)(x_) for x_ in x]
+        for i, n_filter in enumerate(self.n_filters[1:]):
+            x = [self.act(x_) for x_ in x]
+            x = [
+                nn.Conv(
+                    n_filter / self.c if i == 0 else n_filter, (3, 3) if i == 0 else (1, 1), padding="SAME",
+                    use_bias=False
+                )(x_) for x_ in x
+            ]
+            x = [nn.BatchNorm()(x_, use_running_average=not training) for x_ in x]
+
+        x = jnp.stack(x, axis=-1)
+        x = jnp.sum(x, axis=-1)
+        return x
+
+
+class SESkipBlock(nn.Module):
+    forward: nn.Module
+    act = staticmethod(nn.relu)
+    r: int = 16
+
+    @nn.compact
+    def __call__(self, x, training: bool):
+        if self.forward.increase_dim:
+            x = nn.BatchNorm()(x, use_running_average=not training)
+            x = self.act(x)
+            skip = nn.Conv(self.forward.n_filters[-1], (1, 1), padding='VALID')(x)
+        else:
+            if self.forward.down_sample:
+                skip = nn.Conv(self.forward.n_filters[-1], (3, 3), strides=(2, 2), padding='SAME')(x)
+            else:
+                skip = x
+
         y = self.forward(x, training=training)
 
         n_filters = y.shape[-1]
@@ -209,5 +250,4 @@ class SESkipBlock(nn.Module):
         attention = nn.Dense(n_filters)(attention)
         attention = nn.sigmoid(attention)
 
-        return x + y * attention
-
+        return y * attention + skip

@@ -4,6 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 import flax
 import flax.linen as nn
+import einops
 
 from src.layers import *
 
@@ -85,7 +86,7 @@ class VGGNet(nn.Module):
             n_filters *= 2
 
         # Classification head
-        x = x.flatten()
+        x = einops.rearrange(x, "b h w c -> b (h w) c")
         x = nn.Dropout(rate=0.5)(x, deterministic=not training)
         x = nn.Dense(4096)(x)
         x = nn.relu(x)
@@ -107,7 +108,7 @@ class ResNet(nn.Module):
         x = nn.relu(x)
 
         # Feature extraction
-        for i, n_blocks in enumerate(self.config['n_filters']):
+        for i, n_layers in enumerate(self.config['n_layers']):
             if i == 0:
                 x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
                 x = SkipBlock(
@@ -117,14 +118,14 @@ class ResNet(nn.Module):
                 x = SkipBlock(
                     ResBlock(self.config['n_filters'][i], downsample=True)
                 )(x, training=training)
-            for _ in range(n_blocks - 1):
+            for _ in range(n_layers - 1):
                 x = SkipBlock(
                     ResBlock(self.config['n_filters'][i])
                 )(x, training=training)
 
         # Classification head
         x = nn.avg_pool(x, window_shape=(7, 7), strides=(1, 1), padding="VALID")
-        x = x.flatten()
+        x = x.squeeze(axis=(1, 2))
         x = nn.Dense(1000)(x)
         y = nn.softmax(x)
         return y
@@ -144,7 +145,7 @@ class PreActResNet(nn.Module):
         x = nn.relu(x)
 
         # Feature extraction
-        for i, n_blocks in enumerate(self.config['n_filters']):
+        for i, n_layers in enumerate(self.config['n_layers']):
             if i == 0:
                 x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
                 x = IdentitySkipBlock(
@@ -154,14 +155,14 @@ class PreActResNet(nn.Module):
                 x = IdentitySkipBlock(
                     PreActResBlock(self.config['n_filters'][i], downsample=True)
                 )(x, training=training)
-            for _ in range(n_blocks - 1):
+            for _ in range(n_layers - 1):
                 x = IdentitySkipBlock(
                     PreActResBlock(self.config['n_filters'][i])
                 )(x, training=training)
 
         # Classification head
         x = nn.avg_pool(x, window_shape=(7, 7), strides=(1, 1), padding="VALID")
-        x = x.flatten()
+        x = x.squeeze(axis=(1, 2))
         x = nn.Dense(1000)(x)
         y = nn.softmax(x)
         return y
@@ -180,20 +181,53 @@ class DenseNet(nn.Module):
         x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
 
         # Feature extraction
-        for i, n_blocks in enumerate(self.config['n_blocks']):
+        for i, n_layers in enumerate(self.config['n_layers']):
             x_list = [x]
-            for _ in range(n_blocks):
+            for _ in range(n_layers):
                 n_filters += growth_rate
                 x = DenseLayer(n_filters)(jnp.concatenate(x_list, axis=-1), training=training)
                 x_list.append(x)
             n_filters = int(n_filters * self.config['theta'])
             x = jnp.concatenate(x_list, axis=-1)
-            if i != len(self.config['n_blocks']) - 1:
+            if i != len(self.config['n_layers']) - 1:
                 x = DenseTransitionLayer(n_filters)(x, training=training)
 
         # Classification head
         x = nn.avg_pool(x, window_shape=(7, 7), strides=(1, 1), padding="VALID")
-        x = x.flatten()
+        x = x.squeeze(axis=(1, 2))
         x = nn.Dense(1000)(x)
         y = nn.softmax(x)
         return y
+
+
+class SEResNet(nn.Module):
+    config: dict
+
+    @nn.compact
+    def __call__(self, x, training: bool):
+        # Intro
+        x = nn.Conv(self.config['intro']['n_filters'], (7, 7), strides=(2, 2), padding="SAME")(x)
+        x = nn.relu(x)
+
+        # Feature extraction
+        for i, n_layers in enumerate(self.config['n_layers']):
+            if i == 0:
+                x = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
+                x = SESkipBlock(
+                    PreActResBlock(self.config['n_filters'][i], increase_dim=True)
+                )(x, training=training)
+            else:
+                x = SESkipBlock(
+                    PreActResBlock(self.config['n_filters'][i], downsample=True)
+                )(x, training=training)
+            for _ in range(n_layers - 1):
+                x = SESkipBlock(
+                    PreActResBlock(self.config['n_filters'][i])
+                )(x, training=training)
+
+        # Classification head
+        x = jnp.mean(x, axis=(1, 2))
+        x = nn.Dense(1000)(x)
+        y = nn.softmax(x)
+        return y
+
