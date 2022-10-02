@@ -16,11 +16,11 @@ class LocalResponsibleNormalization(nn.Module):
 
     @nn.compact
     def __call__(self, x):
-        div = x.pow(2)
+        div = jnp.power(x, 2)
         if self.across_channel:
-            div = div.expand_dims(1)
-            div = nn.avg_pool(div, window_shape=(1, 1, self.k), strides=(1, 1, 1), padding=(0, 0, int(self.k // 2)))
-            div = div.squeeze(1)
+            div = jnp.expand_dims(div, axis=-1)
+            div = nn.avg_pool(div, window_shape=(1, 1, self.k), strides=(1, 1, 1), padding='SAME')
+            div = div.squeeze()
 
         else:
             div = nn.avg_pool(div, window_shape=(self.k, self.k), strides=(1, 1), padding="SAME")
@@ -193,34 +193,37 @@ class SEBlock(nn.Module):
         return y * attention
 
 
-class ResXBlock(nn.Module):
+class AggResBlock(nn.Module):
     n_filters: Sequence[int]
     act = staticmethod(nn.relu)
     down_sample: bool = False
     increase_dim: bool = False
     c: int = 32
+    '''
+    TODO: Maybe LocalConv3D is better than list of Conv2D ?
+    '''
 
     @nn.compact
     def __call__(self, x, training: bool):
         x = [
             nn.Conv(
-                self.n_filters[0] / self.c, (3, 3) if len(self.n_filters) == 2 else (1, 1), padding='SAME',
+                self.n_filters[0] // self.c, (3, 3) if len(self.n_filters) == 2 else (1, 1), padding='SAME',
                 strides=(2, 2) if self.down_sample else (1, 1), use_bias=False
             )(x) for _ in range(self.c)
         ]
         x = [nn.BatchNorm(use_running_average=not training)(x_) for x_ in x]
         for i, n_filter in enumerate(self.n_filters[1:]):
+            # List comprehension is faster than stack/activation/split
             x = [self.act(x_) for x_ in x]
             x = [
                 nn.Conv(
-                    n_filter / self.c if i == 0 else n_filter, (3, 3) if i == 0 else (1, 1), padding="SAME",
+                    n_filter // self.c if i == 0 else n_filter, (3, 3) if i == 0 else (1, 1), padding="SAME",
                     use_bias=False
                 )(x_) for x_ in x
             ]
             x = [nn.BatchNorm()(x_, use_running_average=not training) for x_ in x]
 
-        x = jnp.stack(x, axis=-1)
-        x = jnp.sum(x, axis=-1)
+        x = jnp.stack(x, axis=-1).sum(axis=-1)
         return x
 
 
