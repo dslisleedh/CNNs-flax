@@ -18,7 +18,7 @@ class LocalResponsibleNormalization(nn.Module):
     def __call__(self, x):
         div = jnp.power(x, 2)
         if self.across_channel:
-            div = jnp.expand_dims(div, axis=-1)
+            div = jnp.expand_dims(div, axis=-2)
             div = nn.avg_pool(div, window_shape=(1, 1, self.k), strides=(1, 1, 1), padding='SAME')
             div = div.squeeze()
 
