@@ -185,12 +185,12 @@ class DenseNet(nn.Module):
             x_list = [x]
             for _ in range(n_layers):
                 n_filters += growth_rate
-                x = DenseLayer(n_filters)(jnp.concatenate(x_list, axis=-1), training=training)
+                x = DenseBlock(n_filters)(jnp.concatenate(x_list, axis=-1), training=training)
                 x_list.append(x)
             n_filters = int(n_filters * self.config['theta'])
             x = jnp.concatenate(x_list, axis=-1)
             if i != len(self.config['n_layers']) - 1:
-                x = DenseTransitionLayer(n_filters)(x, training=training)
+                x = DenseTransitionBlock(n_filters)(x, training=training)
 
         # Classification head
         x = nn.avg_pool(x, window_shape=(7, 7), strides=(1, 1), padding="VALID")

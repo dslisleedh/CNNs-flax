@@ -143,7 +143,7 @@ class PreActResBlock(nn.Module):
         return x
 
 
-class DenseLayer(nn.Module):
+class DenseBlock(nn.Module):
     n_filters: int
     act = staticmethod(nn.relu)
     dropout_rate: float = .2
@@ -161,7 +161,7 @@ class DenseLayer(nn.Module):
         return y
 
 
-class DenseTransitionLayer(nn.Module):
+class DenseTransitionBlock(nn.Module):
     n_filters: int
     act = staticmethod(nn.relu)
     dropout_rate: float = .2
@@ -257,10 +257,10 @@ class SESkipBlock(nn.Module):
         return y * attention + skip
 
 
-class DynamicConv2D(nn.Module):
+class DynamicConv(nn.Module):
     n_filters: int
-    kernel_size: Union[int, Sequence[int]] = (3, 3)
-    strides: Union[int, Sequence[int]] = (1, 1)
+    kernel_size: Sequence[int] = (3, 3)
+    strides: Sequence[int] = (1, 1)
     padding: str = 'SAME'
     feature_group_count: int = 1
     use_bias: bool = True
@@ -271,19 +271,13 @@ class DynamicConv2D(nn.Module):
     initial_temperature: float = 30.
     temperature_decay: float = 1e-4
 
+    # For SkipBlock
+    increase_dim: bool = False
+    down_sample: bool = False
+
     @nn.compact
     def __call__(self, x, training: bool):
         input_batches, _, _, input_filters = x.shape
-
-        if type(self.kernel_size) == int:
-            kernel_size = (self.kernel_size,) * 2
-        else:
-            kernel_size = self.kernel_size
-
-        if type(self.strides) == int:
-            strides = (self.strides,) * 2
-        else:
-            strides = self.strides
 
         reduction_kernel = self.param(
             'reduction_kernel', nn.initializers.variance_scaling(.02, mode='fan_in', distribution='truncated_normal'),
@@ -295,12 +289,13 @@ class DynamicConv2D(nn.Module):
         )
         kernels = self.param(
             'conv_kernels', nn.initializers.variance_scaling(.02, mode='fan_in', distribution='truncated_normal'),
-            (1, self.n_kernels,) + kernel_size + (input_filters, self.n_filters,)
+            (1, self.n_kernels,) + self.kernel_size + (input_filters, self.n_filters,)
         )
         temperature = self.variable(
-            'state', 'temperature', lambda s: jnp.ones(s, jnp.float32) * 30, (1,)
+            'state', 'temperature', lambda s: jnp.ones(s, jnp.float32) * self.initial_temperature, (1,)
         )
 
+        # Computing Attentions
         pool = jnp.mean(x, axis=(1, 2))
         pool_reduction = self.act(
             lax.dot_general(pool, reduction_kernel, (((1,), (0,)), ((), ())))
@@ -315,13 +310,15 @@ class DynamicConv2D(nn.Module):
         w_tiled = einops.rearrange(
             w_tiled, 'B H W F_in F_out -> H W F_in (B F_out)'
         )
+
         x = jnp.expand_dims(
             einops.rearrange(
                 x, 'B H W C -> H W (B C)'
             ), axis=0
         )
+        # feature_group_counts for different weights for each batch sample
         y = lax.conv_general_dilated(
-            x, w_tiled, window_strides=strides, padding=self.padding, dimension_numbers=('NHWC', 'HWIO', 'NHWC'),
+            x, w_tiled, window_strides=self.strides, padding=self.padding, dimension_numbers=('NHWC', 'HWIO', 'NHWC'),
             feature_group_count=input_batches
         )
         y = einops.rearrange(
