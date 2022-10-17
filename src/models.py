@@ -25,17 +25,17 @@ class GoogLeNet(nn.Module):
         x = nn.relu(x)
         x = LocalResponsibleNormalization()(x)
 
-        x = Inception(64, (94, 128), (16, 32), 32, downsample=True)(x)      # inception_3a
-        x = Inception(128, (128, 192), (32, 96), 64)(x)                     # inception_3b
+        x = InceptionBlock(64, (94, 128), (16, 32), 32, downsample=True)(x)      # inception_3a
+        x = InceptionBlock(128, (128, 192), (32, 96), 64)(x)                     # inception_3b
 
-        o_1 = Inception(192, (96, 208), (16, 48), 64, downsample=True)(x)   # inception_4a
-        x = Inception(160, (112, 224), (24, 64), 64)(o_1)                   # inception_4b
-        x = Inception(128, (128, 256), (24, 64), 64)(x)                     # inception_4c
-        o_2 = Inception(112, (144, 288), (32, 64), 64)(x)                   # inception_4d
-        x = Inception(256, (160, 320), (32, 128), 128)(o_2)                 # inception_5e
+        o_1 = InceptionBlock(192, (96, 208), (16, 48), 64, downsample=True)(x)   # inception_4a
+        x = InceptionBlock(160, (112, 224), (24, 64), 64)(o_1)                   # inception_4b
+        x = InceptionBlock(128, (128, 256), (24, 64), 64)(x)                     # inception_4c
+        o_2 = InceptionBlock(112, (144, 288), (32, 64), 64)(x)                   # inception_4d
+        x = InceptionBlock(256, (160, 320), (32, 128), 128)(o_2)                 # inception_5e
 
-        x = Inception(256, (160, 320), (32, 128), 128)(x, downsample=True)  # inception_5a
-        x = Inception(348, (192, 348), (48, 128), 128)(x)                   # inception_5b
+        x = InceptionBlock(256, (160, 320), (32, 128), 128)(x, downsample=True)  # inception_5a
+        x = InceptionBlock(348, (192, 348), (48, 128), 128)(x)                   # inception_5b
 
         # Classification head
         x = nn.avg_pool(x, window_shape=(7, 7), strides=(1, 1), padding="VALID")
@@ -231,3 +231,41 @@ class SEResNet(nn.Module):
         y = nn.softmax(x)
         return y
 
+
+class MobileNet(nn.Module):
+    config: dict
+
+    @nn.compact
+    def __call__(self, x, training: bool):
+        alpha = self.config['alpha']
+        # rho determines input size
+        n_filters = self.config['initial_filters']
+
+        # Intro
+        x = nn.Conv(n_filters, (3, 3), strides=(2, 2), padding="SAME")(x)
+        x = nn.BatchNorm()(x, training=training)
+        x = nn.relu(x)
+        n_filters = int(n_filters * alpha)
+        x = MobileNetBlock(
+            n_filters, down_sample=False, double_channel=True
+        )
+        n_filters *= 2
+
+        # Feature extraction
+        for n_layers in self.config['n_layers']:
+            for i, n in enumerate(range(n_layers)):
+                down_sample = (i == n_layers - 1)
+                x = MobileNetBlock(
+                    n_filters, down_sample=down_sample, double_channel=down_sample
+                )(x, training=training)
+                if down_sample:
+                    n_filters *= 2
+                else:
+                    n_filters = int(n_filters * alpha)
+
+        # Classification head
+        x = nn.avg_pool(x, window_shape=(7, 7), strides=(1, 1), padding="VALID")
+        x = x.squeeze(axis=(1, 2))
+        x = nn.Dense(1000)(x)
+        y = nn.softmax(x)
+        return y

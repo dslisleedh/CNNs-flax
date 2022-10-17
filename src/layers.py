@@ -30,7 +30,7 @@ class LocalResponsibleNormalization(nn.Module):
         return x / div
 
 
-class Inception(nn.Module):
+class InceptionBlock(nn.Module):
     conv_1_filters: int
     conv_3_filters: Sequence[int]
     conv_5_filters: Sequence[int]
@@ -61,6 +61,70 @@ class Inception(nn.Module):
         max_pool = self.act(max_pool)
 
         return jnp.concatenate([conv_1, conv_3, conv_5, max_pool], axis=-1)
+
+
+class InceptionBlockV2(nn.Module):
+    conv_1_filters: int
+    conv_3_filters: Sequence[int]
+    conv_5_filters: Sequence[int]
+    max_pool_filters: int
+    down_sample: bool = False
+    act = staticmethod(nn.relu)
+
+    reduce_conv_3_filters: Optional[Sequence[int]] = None
+    reduce_conv_5_filters: Optional[Sequence[int]] = None
+
+    @nn.compact
+    def __call__(self, x):
+        if self.downsamle:
+            x = InceptionReduceBlockV2(
+                self.reduce_conv_3_filters, self.reduce_conv_5_filters
+            )(x)
+
+        conv_1 = nn.Conv(self.conv_1_filters, (1, 1), padding="SAME")(x)
+        conv_1 = self.act(conv_1)
+
+        conv_3 = nn.Conv(self.conv_3_filters[0], (1, 1), padding="SAME")(x)
+        conv_3 = self.act(conv_3)
+        conv_3 = nn.Conv(self.conv_3_filters[1], (3, 3), padding="SAME")(conv_3)
+        conv_3 = self.act(conv_3)
+
+        conv_5 = nn.Conv(self.conv_5_filters[0], (1, 1), padding="SAME")(x)
+        conv_5 = self.act(conv_5)
+        conv_5 = nn.Conv(self.conv_5_filters[1], (3, 3), padding="SAME")(conv_5)
+        conv_5 = self.act(conv_5)
+        conv_5 = nn.Conv(self.conv_5_filters[2], (3, 3), padding="SAME")(conv_5)
+        conv_5 = self.act(conv_5)
+
+        max_pool = nn.max_pool(x, window_shape=(3, 3), strides=(1, 1), padding="SAME")
+        max_pool = nn.Conv(self.max_pool_filters, (1, 1), padding="SAME")(max_pool)
+        max_pool = self.act(max_pool)
+
+        return jnp.concatenate([conv_1, conv_3, conv_5, max_pool], axis=-1)
+
+
+class InceptionReduceBlockV2(nn.Module):
+    conv_3_filters: Sequence[int]
+    conv_5_filters: Sequence[int]
+    act = staticmethod(nn.relu)
+
+    @nn.compact
+    def __call__(self, x):
+        conv_3 = nn.Conv(self.conv_3_filters[0], (1, 1), strides=(2, 2), padding="SAME")(x)
+        conv_3 = nn.relu(conv_3)
+        conv_3 = nn.Conv(self.conv_3_filters[1], (3, 3), padding="SAME")(conv_3)
+        conv_3 = nn.relu(conv_3)
+
+        conv_5 = nn.Conv(self.conv_5_filters[0], (1, 1), padding="SAME")(x)
+        conv_5 = nn.relu(conv_5)
+        conv_5 = nn.Conv(self.conv_5_filters[1], (3, 3), strides=(1, 1), padding="SAME")(conv_5)
+        conv_5 = nn.relu(conv_5)
+        conv_5 = nn.Conv(self.conv_5_filters[2], (3, 3), strides=(2, 2), padding="SAME")(conv_5)
+        conv_5 = nn.relu(conv_5)
+
+        max_pool = nn.max_pool(x, window_shape=(3, 3), strides=(2, 2), padding="SAME")
+
+        return jnp.concatenate([conv_3, conv_5, max_pool], axis=-1)
 
 
 class SkipBlock(nn.Module):
@@ -214,7 +278,7 @@ class AggResBlock(nn.Module):
         ]
         x = [nn.BatchNorm(use_running_average=not training)(x_) for x_ in x]
         for i, n_filter in enumerate(self.n_filters[1:]):
-            # List comprehension is faster than stack/activation/split
+            # List comprehension is faster than stack/activation/split when c==32
             x = [self.act(x_) for x_ in x]
             x = [
                 nn.Conv(
@@ -264,7 +328,7 @@ class DynamicConv(nn.Module):
     padding: str = 'SAME'
     feature_group_count: int = 1
     use_bias: bool = True
-    act = staticmethod(nn.relu)
+    act = staticmethod(nn.relu6)
 
     r_filters: int = 4
     n_kernels: int = 4
@@ -347,3 +411,22 @@ class DynamicConv(nn.Module):
             )
 
         return y
+
+
+class MobileNetBlock(nn.Module):
+    n_filters: int
+    down_sample: bool = False
+    double_channel: bool = False
+
+    @nn.compact
+    def __call__(self, x, training: bool):
+        x = nn.Conv(
+            self.n_filters, (3, 3), strides=(2, 2) if self.down_sample else (1, 1), padding='SAME',
+            feature_group_count=self.n_filters
+        )
+        x = nn.BatchNorm()(x, use_running_average=not training)
+        x = nn.relu(x)
+        x = nn.Conv(self.n_filters * 2 if self.double_channel else self.n_filters, (1, 1), padding='VALID')(x)
+        x = nn.BatchNorm()(x, use_running_average=not training)
+        x = nn.relu(x)
+        return x
